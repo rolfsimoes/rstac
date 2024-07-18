@@ -5,7 +5,7 @@ articles:
   rstac-01-intro: rstac-01-intro.html
   rstac-02-cql2: rstac-02-cql2.html
   rstac-03-cql2-mpc: rstac-03-cql2-mpc.html
-last_built: 2024-07-18T19:22Z
+last_built: 2024-07-18T19:27Z
 urls:
   reference: https://brazil-data-cube.github.io/rstac/reference
   article: https://brazil-data-cube.github.io/rstac/articles
