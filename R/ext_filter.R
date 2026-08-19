@@ -255,14 +255,14 @@ ext_filter <- function(q, expr, lang = NULL, crs = NULL) {
   )
   params <- cql2(expr, lang = lang, crs = crs)
   # check filter expression is appropriate for types based on schema
-  check_filter_schema(q, params)
+  version <- check_filter_schema(q, params)
   if (any(c("search", "items") %in% subclass(q))) {
     subclass <- unique(c("ext_filter", subclass(q)))
   } else {
     subclass <- unique(c("ext_filter", "search", subclass(q)))
   }
   rstac_query(
-    version = q$version,
+    version = version,
     base_url = q$base_url,
     params = modify_list(q$params, params),
     subclass = subclass
@@ -334,10 +334,24 @@ cql2_text <- function(expr) {
 }
 
 check_filter_schema <- function(q, params) {
-  schema <- openapi_schema(q$base_url, q$version)
+  stac_info <- stac_api_info(q)
+  api_res <- NULL
+
+  if (!is.null(stac_info$content)) {
+    api_res <- as_rstac_doc(
+      stac_info$content,
+      base_url = stac_info$request_url
+    )
+  }
+
+  schema <- openapi_schema(
+    url = q$base_url,
+    force_version = stac_info$version,
+    api_res = api_res
+  )
 
   if (is.null(schema)) {
-    return(invisible(NULL))
+    return(invisible(stac_info$version))
   }
 
   # Go through each filter, extract the variable being filtered and the
@@ -366,6 +380,8 @@ check_filter_schema <- function(q, params) {
     params_filter <- params$filter
     check_variable_op(params_filter, schema)
   }
+
+  invisible(stac_info$version)
 }
 
 check_variable_op <- function(params_filter, schema) {
@@ -400,9 +416,11 @@ check_variable_op <- function(params_filter, schema) {
   }
 }
 
-openapi_schema <- function(url, force_version = NULL) {
-  api_res <- stac(url, force_version = force_version) %>%
-    get_request()
+openapi_schema <- function(url, force_version = NULL, api_res = NULL) {
+  if (is.null(api_res)) {
+    api_res <- stac(url, force_version = force_version) %>%
+      get_request()
+  }
 
   rel <- NULL # Avoid notes
   service_desc_link <- links(api_res, rel == "service-desc")

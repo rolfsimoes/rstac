@@ -48,27 +48,39 @@ rstac_query <- function(version = NULL, base_url, params = list(), subclass) {
   )
 }
 
-#' @export
-stac_version.rstac_query <- function(x, ...) {
+stac_api_info <- function(x, ...) {
   if (!is.null(x$version)) {
-    return(x$version)
+    return(list(
+      version = x$version,
+      response = NULL,
+      content = NULL,
+      request_url = NULL
+    ))
   }
+
   version <- NULL
+  content <- NULL
+  response <- NULL
+  request_url <- resolve_url(x$base_url, "./")
+
   # check in '/' endpoint
   res <- make_get_request(
-    url = resolve_url(x$base_url, "./"),
+    url = request_url,
     ...
   )
   if (!is.null(res)) {
     content <- content_response_json(res)
     version <- content$stac_version
+    response <- res
   }
+
   # if no version was found, try './stac' endpoint
   if (is.null(version)) {
+    request_url <- resolve_url(x$base_url, "./stac")
     res <- tryCatch(
       {
         make_get_request(
-          url = resolve_url(x$base_url, "./stac"),
+          url = request_url,
           ...
         )
       },
@@ -83,16 +95,29 @@ stac_version.rstac_query <- function(x, ...) {
       )
       if (!is.null(content)) {
         version <- content$stac_version
+        response <- res
       }
     }
   }
+
   if (is.null(version)) {
     .error(paste(
       "Could not determine STAC version in URL '%s'.",
       "Please, use 'force_version' parameter in stac() function"
     ), x$base_url)
   }
-  version
+
+  list(
+    version = version,
+    response = response,
+    content = content,
+    request_url = request_url
+  )
+}
+
+#' @export
+stac_version.rstac_query <- function(x, ...) {
+  stac_api_info(x, ...)$version
 }
 
 #' @export

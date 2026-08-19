@@ -51,14 +51,24 @@ get_request <- function(q, simplify_vector = NULL, ...) {
   check_query(q)
   q$verb <- "GET"
   q$encode <- NULL
-  q$version <- stac_version(q, ...)
+
+  stac_info <- stac_api_info(q, ...)
+  q$version <- stac_info$version
   q <- before_request(q)
-  res <- make_get_request(
-    url = resolve_url(q$base_url, q$endpoint),
-    query = query_encode(q$params),
-    ...,
-    error_msg = "Error while requesting"
-  )
+
+  request_url <- resolve_url(q$base_url, q$endpoint)
+  if (!is.null(stac_info$response) &&
+      identical(request_url, stac_info$request_url) &&
+      length(q$params) == 0) {
+    res <- stac_info$response
+  } else {
+    res <- make_get_request(
+      url = request_url,
+      query = query_encode(q$params),
+      ...,
+      error_msg = "Error while requesting"
+    )
+  }
   # process content and return
   after_response(q, res = res, simplify_vector = simplify_vector)
 }
@@ -74,7 +84,7 @@ post_request <- function(q, simplify_vector = NULL, ..., encode = c("json", "mul
   check_body_encode(encode)
   q$verb <- "POST"
   q$encode <- encode
-  q$version <- stac_version(q, ...)
+  q$version <- stac_api_info(q, ...)$version
   q <- before_request(q)
   res <- make_post_request(
     url = resolve_url(q$base_url, q$endpoint),
