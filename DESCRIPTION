@@ -40,7 +40,7 @@ Imports:
     magrittr
 Suggests:
     lifecycle,
-    testthat,
+    testthat (>= 3.1.7),
     knitr,
     vctrs
 Collate:

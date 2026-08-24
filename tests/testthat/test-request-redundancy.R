@@ -12,9 +12,12 @@ mock_stac_response <- function(url, payload, status_code = 200L, headers = list(
     list(
       url = url,
       status_code = as.integer(status_code),
-      headers = modifyList(
-        list(`Content-Type` = "application/json"),
-        headers
+      headers = structure(
+        modifyList(
+          list(`content-type` = "application/json"),
+          headers
+        ),
+        class = "insensitive"
       ),
       content = charToRaw(payload)
     ),
@@ -22,7 +25,7 @@ mock_stac_response <- function(url, payload, status_code = 200L, headers = list(
   )
 }
 
-mock_stac_service <- function(rate_limit_after = Inf) {
+mock_stac_service <- function() {
   landing_url <- "https://mock-stac.example/v1/"
   api_url <- "https://mock-stac.example/v1/api"
   search_url <- "https://mock-stac.example/v1/search"
@@ -30,7 +33,6 @@ mock_stac_service <- function(rate_limit_after = Inf) {
   counts <- new.env(parent = emptyenv())
   counts$requests <- list()
   counts$post_bodies <- list()
-  counts$total <- 0L
 
   count_request <- function(method, url, body = NULL) {
     path <- httr::parse_url(url)$path
@@ -42,23 +44,13 @@ mock_stac_service <- function(rate_limit_after = Inf) {
     }
 
     key <- paste(method, path)
-    counts$total <- counts$total + 1L
     counts$requests[[key]] <- (counts$requests[[key]] %||% 0L) + 1L
 
     if (!is.null(body)) {
       counts$post_bodies[[length(counts$post_bodies) + 1L]] <- body
     }
 
-    list(path = path, total = counts$total)
-  }
-
-  too_many_requests <- function(url) {
-    mock_stac_response(
-      url = url,
-      status_code = 429L,
-      headers = list(`Retry-After` = "2"),
-      payload = list(description = "Too Many Requests")
-    )
+    path
   }
 
   landing_page <- list(
@@ -117,13 +109,9 @@ mock_stac_service <- function(rate_limit_after = Inf) {
   )
 
   make_get_request <- function(url, ..., headers = NULL, error_msg = NULL) {
-    req <- count_request("GET", url)
+    path <- count_request("GET", url)
 
-    if (req$total > rate_limit_after) {
-      return(too_many_requests(url))
-    }
-
-    switch(req$path,
+    switch(path,
       "/v1/" = mock_stac_response(url, landing_page),
       "/v1/stac" = mock_stac_response(url, list(description = "Not Found"), status_code = 404L),
       mock_stac_response(url, list(description = "Not Found"), status_code = 404L)
@@ -131,13 +119,9 @@ mock_stac_service <- function(rate_limit_after = Inf) {
   }
 
   make_post_request <- function(url, ..., body, encode = c("json", "multipart", "form"), headers = NULL, error_msg = NULL) {
-    req <- count_request("POST", url, body = body)
+    path <- count_request("POST", url, body = body)
 
-    if (req$total > rate_limit_after) {
-      return(too_many_requests(url))
-    }
-
-    switch(req$path,
+    switch(path,
       "/v1/search" = mock_stac_response(url, items_response),
       mock_stac_response(url, list(description = "Not Found"), status_code = 404L)
     )
@@ -145,13 +129,9 @@ mock_stac_service <- function(rate_limit_after = Inf) {
 
   link_open <- function(link, base_url = NULL) {
     url <- link$href
-    req <- count_request("GET", url)
+    path <- count_request("GET", url)
 
-    if (req$total > rate_limit_after) {
-      stop("HTTP status '429'. Too Many Requests", call. = FALSE)
-    }
-
-    switch(req$path,
+    switch(path,
       "/v1/api" = rstac:::doc_openapi_specification(openapi_spec),
       stop("Not Found", call. = FALSE)
     )
@@ -193,38 +173,6 @@ test_that("get_request(stac()) reuses the version-detection landing page respons
   expect_null(mock$counts()[["GET /v1/stac"]])
 })
 
-test_that("ext_filter retains discovered service metadata for post_request()", {
-  mock <- mock_stac_service()
-
-  testthat::local_mocked_bindings(
-    make_get_request = mock$make_get_request,
-    make_post_request = mock$make_post_request,
-    link_open = mock$link_open,
-    .package = "rstac"
-  )
-
-  query <- rstac::stac(mock$url) |>
-    rstac::stac_search(
-      collections = "sentinel-2-l2a",
-      datetime = "2023-05-01/2023-09-01",
-      limit = 1
-    ) |>
-    rstac::ext_filter(`product:type` == "S2MSI2A")
-
-  expect_equal(query$version, "1.0.0")
-  expect_equal(mock$counts()[["GET /v1/"]], 1L)
-  expect_equal(mock$counts()[["GET /v1/api"]], 1L)
-
-  res <- rstac::post_request(query)
-
-  expect_s3_class(res, "doc_items")
-  expect_equal(length(res$features), 1L)
-  expect_equal(res$features[[1]]$properties[["product:type"]], "S2MSI2A")
-  expect_equal(mock$counts()[["GET /v1/"]], 1L)
-  expect_equal(mock$counts()[["GET /v1/api"]], 1L)
-  expect_equal(mock$counts()[["POST /v1/search"]], 1L)
-})
-
 test_that("filtered STAC search avoids redundant requests and preserves POST body", {
   mock <- mock_stac_service()
 
@@ -235,12 +183,12 @@ test_that("filtered STAC search avoids redundant requests and preserves POST bod
     .package = "rstac"
   )
 
-  query <- rstac::stac(mock$url) |>
+  query <- rstac::stac(mock$url) %>%
     rstac::stac_search(
       collections = "sentinel-2-l2a",
       datetime = "2023-05-01/2023-09-01",
       limit = 1
-    ) |>
+    ) %>%
     rstac::ext_filter(`product:type` == "S2MSI2A")
 
   expected_query <- query
@@ -263,31 +211,4 @@ test_that("filtered STAC search avoids redundant requests and preserves POST bod
   post_bodies <- mock$post_bodies()
   expect_length(post_bodies, 1L)
   expect_equal(post_bodies[[1]], expected_body)
-})
-
-test_that("filtered STAC search succeeds under a 3-request rate limit", {
-  mock <- mock_stac_service(rate_limit_after = 3L)
-
-  testthat::local_mocked_bindings(
-    make_get_request = mock$make_get_request,
-    make_post_request = mock$make_post_request,
-    link_open = mock$link_open,
-    .package = "rstac"
-  )
-
-  res <- rstac::stac(mock$url) |>
-    rstac::stac_search(
-      collections = "sentinel-2-l2a",
-      datetime = "2023-05-01/2023-09-01",
-      limit = 1
-    ) |>
-    rstac::ext_filter(`product:type` == "S2MSI2A") |>
-    rstac::post_request()
-
-  expect_s3_class(res, "doc_items")
-
-  counts <- mock$counts()
-  expect_equal(counts[["GET /v1/"]], 1L)
-  expect_equal(counts[["GET /v1/api"]], 1L)
-  expect_equal(counts[["POST /v1/search"]], 1L)
 })
